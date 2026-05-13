@@ -192,17 +192,20 @@ def _read_extractor_record(conn, *, id: str) -> dict[str, Any]:
     return {"record": _record_to_dict(record)}
 
 
-def _list_commitments(
+def _search_extractor_records(
     conn,
     *,
-    status: str = "active",
+    query: str,
+    kind: str | None = None,
+    status: str | None = None,
     since: str | None = None,
     until: str | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
-    return _list_extractor_records(
-        conn, kind="commitment", status=status, since=since, until=until, limit=limit
+    records = extractor_store.search_records(
+        conn, query=query, kind=kind, status=status, since=since, until=until, limit=limit
     )
+    return {"count": len(records), "records": [_record_to_dict(r) for r in records]}
 
 
 _SERVER_INSTRUCTIONS = """\
@@ -295,6 +298,11 @@ Use it to recover context, not to invent certainty.
 - `current_context()` — one-shot snapshot of the current/recent screen context with visible text and timeline blocks. Default for present-tense or ambiguous-reference questions.
 - `search_captures(query, since?, until?, app_name?, limit?)` — BM25 over the raw screen buffer. Use for exact strings the user likely saw or typed: error messages, code symbols, file paths, URLs, doc titles.
 - `read_recent_capture(at?, app_name?, window_title_substring?, ...)` — hydrate one recent capture in full. Use after a `search_captures` hit or when a compressed entry points you to a raw breadcrumb.
+
+- **Typed extractor records**
+  - `list_extractor_records(kind?, status?, since?, until?, limit?)` — list structured operational records. Filter by entity type (`commitment`, `person_signal`, `decision`, `risk`, `open_loop`) instead of using specialized per-kind tools.
+  - `search_extractor_records(query, kind?, status?, since?, until?, limit?)` — generic search across typed record summaries, payloads, source refs, and links, with optional entity-type filtering.
+  - `read_extractor_record(id)` — hydrate one typed record with payload and grounding source refs.
 
 ### Reference
 
@@ -518,16 +526,25 @@ def build_server(cfg: Config | None = None):
             return json.dumps(_read_extractor_record(conn, id=id), ensure_ascii=False)
 
     @server.tool()
-    def list_commitments(
-        status: str = "active",
+    def search_extractor_records(
+        query: str,
+        kind: str | None = None,
+        status: str | None = None,
         since: str | None = None,
         until: str | None = None,
         limit: int = 100,
     ) -> str:
-        """Convenience view for active commitments extracted from recent context."""
+        """Search typed extractor records with optional entity-type filtering.
+
+        Use `kind` to filter to commitments, person signals, decisions, risks,
+        or open loops instead of looking for specialized tools per entity type.
+        """
         with fts.cursor() as conn:
             return json.dumps(
-                _list_commitments(conn, status=status, since=since, until=until, limit=limit),
+                _search_extractor_records(
+                    conn, query=query, kind=kind, status=status,
+                    since=since, until=until, limit=limit,
+                ),
                 ensure_ascii=False,
             )
 

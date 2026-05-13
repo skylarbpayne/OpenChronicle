@@ -241,11 +241,11 @@ The mocked classifier calls `record_commitment(...)`; test asserts:
 
 ---
 
-## Phase 3: MCP Commitment Surface
+## Phase 3: Generic Typed Record MCP Surface
 
-### Task 3.1: Add `list_commitments` MCP tool
+### Task 3.1: Add generic typed record MCP tools
 
-**Objective:** Let agents query pending commitments without raw FTS spelunking.
+**Objective:** Let agents query commitments and other extracted entities without raw FTS spelunking or per-kind tool sprawl.
 
 **Files:**
 - Modify: `src/openchronicle/mcp/server.py`
@@ -254,23 +254,25 @@ The mocked classifier calls `record_commitment(...)`; test asserts:
 **Tool contract:**
 
 ```python
-list_commitments(
-    within: str | None = None,  # e.g. "7d"
-    status: str = "pending",
-    with_entity: str | None = None,
-    limit: int = 20,
+list_extractor_records(
+    kind: str | None = None,    # e.g. "commitment", "person_signal", "decision"
+    status: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+)
+
+search_extractor_records(
+    query: str,
+    kind: str | None = None,
+    status: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
 )
 ```
 
-V1 can be conservative: parse ISO `when` values; include null/relative dates after dated results.
-
-### Task 3.2: Add `search_commitments` or filter support
-
-**Objective:** Support targeted queries like “Jacqueline”, “Motion”, “Friday”, “interview”.
-
-**Files:**
-- Modify: `src/openchronicle/mcp/server.py`
-- Test: `tests/test_mcp_tools.py`
+Avoid specialized MCP tools such as `list_commitments` unless generic search/list proves insufficient.
 
 ---
 
@@ -286,9 +288,9 @@ V1 can be conservative: parse ISO `when` values; include null/relative dates aft
 
 Likely no code change needed because memory file export should already include all `.md` memory files.
 
-### Task 4.2: Add Palmer mirror MCP commitment helper if needed
+### Task 4.2: Add Palmer mirror generic extractor tools if needed
 
-**Objective:** If OpenChronicle’s own MCP tool is not mirrored directly, add a read-only mirror-side `list_commitments` tool in `macbook-context-bridge-r2`.
+**Objective:** If OpenChronicle’s own MCP tools are not mirrored directly, add read-only mirror-side generic extractor tools in `macbook-context-bridge-r2`.
 
 **Files:**
 - In bridge repo: `src/macbook_context_bridge/mcp_server.py`
@@ -334,14 +336,13 @@ Expected: model pings pass, timeline/reducer/classifier no longer show LiteLLM b
 1. LLM adapter abstraction and tests.
 2. `chatgpt/` Responses routing.
 3. Install fork editable on MacBook and verify one real writer run.
-4. Commitment prefix + tools + prompt tests.
-5. MCP `list_commitments`.
-6. Bridge mirror support only if OpenChronicle memory export is insufficient.
+4. Configurable typed records + generic MCP read/search tools.
+5. Bridge mirror support only if OpenChronicle memory export is insufficient.
 
 ## Acceptance Criteria
 
 - No setup script monkey-patches installed packages.
 - `openchronicle status` passes for ChatGPT/Codex-subscription models.
 - Writer produces memory/timeline output from real captures.
-- Commitments are queryable through MCP as structured pending items.
+- Typed extractor records are queryable through generic MCP tools with `kind` filters.
 - Mac mini Palmer mirror receives commitment memory through the existing encrypted R2 bridge.

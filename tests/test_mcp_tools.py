@@ -66,7 +66,7 @@ def test_get_schema() -> None:
     assert "Memory Organization Spec" in out["schema"]
 
 
-def test_extractor_record_tools(ac_root: Path) -> None:
+def test_extractor_record_tools_are_generic_with_kind_filter(ac_root: Path) -> None:
     with fts.cursor() as conn:
         extractor_store.upsert_record(
             conn,
@@ -84,15 +84,31 @@ def test_extractor_record_tools(ac_root: Path) -> None:
                 updated_at="2026-05-12T21:00:00-07:00",
             ),
         )
+        extractor_store.upsert_record(
+            conn,
+            extractor_store.ExtractorRecord(
+                id="decision-use-r2-mailbox",
+                extractor_id="core",
+                kind="decision",
+                status="active",
+                confidence=0.85,
+                summary="Use R2 as the MacBook context mailbox.",
+                payload={"decision": "Use R2 mailbox", "rationale": "travel-proof store-and-forward"},
+                source_refs=[{"event_path": "event-2026-05-12.md", "entry_id": "e2", "quote": "use R2 as the mailbox"}],
+                links=[],
+                created_at="2026-05-12T21:05:00-07:00",
+                updated_at="2026-05-12T21:05:00-07:00",
+            ),
+        )
         listed = mcp_server._list_extractor_records(conn, kind="commitment", status="active")
         read = mcp_server._read_extractor_record(conn, id="commitment-send-bob-deck")
-        commitments = mcp_server._list_commitments(conn)
+        searched = mcp_server._search_extractor_records(conn, query="mailbox", kind="decision")
 
     assert listed["count"] == 1
     assert listed["records"][0]["summary"] == "Send Bob the deck by Friday."
     assert read["record"]["payload"]["when_text"] == "Friday"
-    assert commitments["count"] == 1
-    assert commitments["records"][0]["id"] == "commitment-send-bob-deck"
+    assert searched["count"] == 1
+    assert searched["records"][0]["id"] == "decision-use-r2-mailbox"
 
 
 # ─── search_captures + current_context ────────────────────────────────────

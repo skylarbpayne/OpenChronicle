@@ -139,6 +139,53 @@ def list_records(
     return [_from_row(row) for row in rows]
 
 
+def search_records(
+    conn: sqlite3.Connection,
+    *,
+    query: str,
+    kind: str | None = None,
+    status: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+) -> list[ExtractorRecord]:
+    """Search typed extractor records with optional entity-type filtering.
+
+    This intentionally stays generic: entity specialization lives in `kind`, not
+    in separate tools/functions for every extracted type.
+    """
+    ensure_schema(conn)
+    terms = [t.casefold() for t in query.split() if t.strip()]
+    clauses: list[str] = []
+    args: list[Any] = []
+    if kind is not None:
+        clauses.append("kind=?")
+        args.append(kind)
+    if status is not None:
+        clauses.append("status=?")
+        args.append(status)
+    if since is not None:
+        clauses.append("updated_at >= ?")
+        args.append(since)
+    if until is not None:
+        clauses.append("updated_at <= ?")
+        args.append(until)
+    haystack = "lower(summary || ' ' || payload_json || ' ' || source_refs_json || ' ' || links_json)"
+    for term in terms:
+        clauses.append(f"{haystack} LIKE ?")
+        args.append(f"%{_escape_like(term)}%")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM extractor_records {where} ORDER BY updated_at DESC, id ASC LIMIT ?",
+        (*args, limit),
+    ).fetchall()
+    return [_from_row(row) for row in rows]
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _as_tuple(record: ExtractorRecord) -> tuple[Any, ...]:
     return (
         record.id,

@@ -288,14 +288,9 @@ read_extractor_record(id)
 search_extractor_records(query, kind?, status?, top_k?)
 ```
 
-Add convenience tools for high-value built-ins:
+Do **not** add convenience tools per built-in kind yet. Keep entity specialization in `kind` filters so the API does not sprawl as extractors grow.
 
-```text
-list_commitments(status="pending", within="7d", with_entity?)
-list_people(query?, recently_interacted_since?)
-```
-
-The generic tools keep the system extensible; convenience tools make agents actually use it.
+The generic tools keep the system extensible and still let agents ask narrow questions, e.g. `search_extractor_records(query="deck", kind="commitment")`.
 
 ## Config defaults for Skylar’s fork
 
@@ -409,11 +404,12 @@ uv run pytest tests/test_extractor_store.py -q
 **Tools:**
 
 ```text
-list_extractor_records
-read_extractor_record
-search_extractor_records
-list_commitments
+list_extractor_records(kind?, status?, since?, until?, limit?)
+read_extractor_record(id)
+search_extractor_records(query, kind?, status?, since?, until?, limit?)
 ```
+
+**Rule:** avoid specialized MCP tools such as `list_commitments` until proven necessary; filter by `kind` instead.
 
 ### Task 7: Add people extractor as second proof
 
@@ -440,7 +436,7 @@ list_commitments
 
 - `uv run pytest -q` passes.
 - With extractors enabled, a fake session containing “I’ll send Bob the deck by Friday” produces one `commitment` record.
-- `list_commitments(within="7d")` returns that record.
+- `search_extractor_records(query="deck", kind="commitment")` returns that record.
 - A fake session mentioning “Bob” without durable relationship/context does not produce a person record.
 - Disabling `commitments` in config prevents commitment extraction without changing code.
 - No calendar/task side effects exist in OpenChronicle.
