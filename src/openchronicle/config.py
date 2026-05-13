@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import paths
+from .extractors.spec import ExtractorConfig, build_extractor_config
 
 
 @dataclass
@@ -140,6 +141,7 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    extractors: ExtractorConfig = field(default_factory=ExtractorConfig)
 
     def model_for(self, stage: str) -> ModelConfig:
         """Return stage config (already inherited from default at build time)."""
@@ -196,6 +198,7 @@ def load(path: Path | None = None) -> Config:
         memory=_build_dataclass(MemoryConfig, _as_dict(raw.get("memory"))),
         search=_build_dataclass(SearchConfig, _as_dict(raw.get("search"))),
         mcp=_build_dataclass(MCPConfig, _as_dict(raw.get("mcp"))),
+        extractors=build_extractor_config(_as_dict(raw.get("extractors"))),
     )
 
 
@@ -275,6 +278,21 @@ auto_dormant_days = 30
 [search]
 default_top_k = 5
 filter_superseded_by_default = true
+
+[extractors]
+enabled = true              # typed operational records from event/timeline context
+
+[[extractors.items]]
+id = "core"
+enabled = true
+mode = "variadic"           # one LLM pass can emit commitment/person/decision/risk/open_loop
+kinds = ["commitment", "person_signal", "decision", "risk", "open_loop"]
+prompt = "extractors/core.md"
+schema = "extractors/core.schema.json"
+model_stage = "classifier"
+run_on = "classified_window"
+max_records = 25
+min_confidence = 0.55
 
 [mcp]
 auto_start = true                 # run an always-on MCP server inside the daemon

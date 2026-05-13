@@ -12,8 +12,11 @@ from openchronicle import config as config_mod
 from openchronicle import paths
 from openchronicle.store import entries as entries_mod
 from openchronicle.store import fts
+from openchronicle.timeline import store as timeline_store
+from openchronicle.extractors import runner as extractor_runner
 from openchronicle.writer import classifier as classifier_mod
 from openchronicle.writer import llm as llm_mod
+
 
 
 _TZ = timezone(timedelta(hours=8))
@@ -100,6 +103,43 @@ def test_classifier_appends_durable_preference(ac_root: Path, monkeypatch) -> No
     # user-preferences.md got the new entry.
     pref = (paths.memory_dir() / "user-preferences.md").read_text()
     assert "Cursor over VSCode" in pref
+
+
+def test_classifier_invokes_configured_extractors_with_same_grounded_context(
+    ac_root: Path, monkeypatch,
+) -> None:
+    day = "2026-04-22"
+    name, entry_id = _seed_event_daily(day)
+    script = [_response([_tool_call("commit", {"summary": ""}, cid="c1")])]
+    calls = []
+
+    def fake_call_llm(cfg, stage, *, messages, tools=None, json_mode=False):
+        return script.pop(0)
+
+    def fake_run_extractors(cfg, conn, *, run_on, session_id, event_daily_path, context, now):
+        calls.append({
+            "run_on": run_on,
+            "session_id": session_id,
+            "event_daily_path": event_daily_path,
+            "context": context,
+            "now": now,
+        })
+        return extractor_runner.ExtractorRunResult(ran=["core"], written_count=1)
+
+    monkeypatch.setattr(llm_mod, "call_llm", fake_call_llm)
+    monkeypatch.setattr(extractor_runner, "run_extractors_for_context", fake_run_extractors)
+
+    cfg = config_mod.load(ac_root / "config.toml")
+    classifier_mod.classify_after_reduce(
+        cfg, session_id="sess_abc", event_daily_path=name, just_written_entry_id=entry_id,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["run_on"] == "classified_window"
+    assert calls[0]["session_id"] == "sess_abc"
+    assert calls[0]["event_daily_path"] == name
+    assert "Session entries" in calls[0]["context"]
+    assert "Cursor configuring" in calls[0]["context"]
 
 
 def test_classifier_rejects_event_write(ac_root: Path, monkeypatch) -> None:

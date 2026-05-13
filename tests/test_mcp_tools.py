@@ -4,6 +4,7 @@ from pathlib import Path
 
 from openchronicle.mcp import captures as captures_mod
 from openchronicle.mcp import server as mcp_server
+from openchronicle.extractors import store as extractor_store
 from openchronicle.store import entries as entries_mod
 from openchronicle.store import fts
 from openchronicle.timeline import store as timeline_store
@@ -63,6 +64,35 @@ def test_recent_activity(ac_root: Path) -> None:
 def test_get_schema() -> None:
     out = mcp_server._get_schema()
     assert "Memory Organization Spec" in out["schema"]
+
+
+def test_extractor_record_tools(ac_root: Path) -> None:
+    with fts.cursor() as conn:
+        extractor_store.upsert_record(
+            conn,
+            extractor_store.ExtractorRecord(
+                id="commitment-send-bob-deck",
+                extractor_id="core",
+                kind="commitment",
+                status="active",
+                confidence=0.9,
+                summary="Send Bob the deck by Friday.",
+                payload={"what": "Send Bob the deck", "when_text": "Friday"},
+                source_refs=[{"event_path": "event-2026-05-12.md", "entry_id": "e1", "quote": "I'll send Bob the deck by Friday"}],
+                links=["person-bob"],
+                created_at="2026-05-12T21:00:00-07:00",
+                updated_at="2026-05-12T21:00:00-07:00",
+            ),
+        )
+        listed = mcp_server._list_extractor_records(conn, kind="commitment", status="active")
+        read = mcp_server._read_extractor_record(conn, id="commitment-send-bob-deck")
+        commitments = mcp_server._list_commitments(conn)
+
+    assert listed["count"] == 1
+    assert listed["records"][0]["summary"] == "Send Bob the deck by Friday."
+    assert read["record"]["payload"]["when_text"] == "Friday"
+    assert commitments["count"] == 1
+    assert commitments["records"][0]["id"] == "commitment-send-bob-deck"
 
 
 # ─── search_captures + current_context ────────────────────────────────────

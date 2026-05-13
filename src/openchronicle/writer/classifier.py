@@ -25,6 +25,7 @@ from ..prompts import load as load_prompt
 from ..store import entries as entries_mod
 from ..store import files as files_mod
 from ..store import fts
+from ..extractors import runner as extractor_runner
 from . import llm as llm_mod
 from . import tools as tools_mod
 
@@ -98,12 +99,19 @@ def classify_window(
             prior_day_text=prior_day_text,
         )
 
-        return _run_tool_loop(
+        result = _run_tool_loop(
             cfg, conn,
             session_id=session_id,
             event_daily_path=event_daily_path,
             context=context,
         )
+        _run_configured_extractors(
+            cfg, conn,
+            session_id=session_id,
+            event_daily_path=event_daily_path,
+            context=context,
+        )
+        return result
 
 
 def classify_after_reduce(
@@ -184,12 +192,19 @@ def _classify_untimed(
             timeline_text="",
             prior_day_text="",
         )
-        return _run_tool_loop(
+        result = _run_tool_loop(
             cfg, conn,
             session_id=session_id,
             event_daily_path=event_daily_path,
             context=context,
         )
+        _run_configured_extractors(
+            cfg, conn,
+            session_id=session_id,
+            event_daily_path=event_daily_path,
+            context=context,
+        )
+        return result
 
 
 def _focus_entries_in_range(
@@ -352,6 +367,37 @@ def _assemble_context(
         "`search_memory` or `read_memory` — don't guess."
     )
     return "\n".join(parts).strip()
+
+
+def _run_configured_extractors(
+    cfg: Config,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    event_daily_path: str,
+    context: str,
+) -> None:
+    """Run configured extractors best-effort after classifier context assembly."""
+    try:
+        result = extractor_runner.run_extractors_for_context(
+            cfg,
+            conn,
+            run_on="classified_window",
+            session_id=session_id,
+            event_daily_path=event_daily_path,
+            context=context,
+            now=datetime.now().astimezone().isoformat(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("extractors %s: crashed: %s", session_id, exc)
+        return
+    if result.errors:
+        logger.warning("extractors %s: %s", session_id, "; ".join(result.errors))
+    elif result.written_count:
+        logger.info(
+            "extractors %s: wrote %d records via %s",
+            session_id, result.written_count, ",".join(result.ran),
+        )
 
 
 def _render_index(conn: sqlite3.Connection) -> str:

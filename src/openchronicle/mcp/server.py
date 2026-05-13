@@ -23,6 +23,7 @@ from ..logger import get
 from ..prompts import load as load_prompt
 from ..store import files as files_mod
 from ..store import fts
+from ..extractors import store as extractor_store
 from . import captures as captures_mod
 
 logger = get("openchronicle.mcp")
@@ -150,6 +151,58 @@ def _recent_activity(
 
 def _get_schema() -> dict[str, Any]:
     return {"schema": load_prompt("schema.md")}
+
+
+def _record_to_dict(record: extractor_store.ExtractorRecord) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "extractor_id": record.extractor_id,
+        "kind": record.kind,
+        "status": record.status,
+        "confidence": record.confidence,
+        "summary": record.summary,
+        "payload": record.payload,
+        "source_refs": record.source_refs,
+        "links": record.links,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "superseded_by": record.superseded_by,
+    }
+
+
+def _list_extractor_records(
+    conn,
+    *,
+    kind: str | None = None,
+    status: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    records = extractor_store.list_records(
+        conn, kind=kind, status=status, since=since, until=until, limit=limit
+    )
+    return {"count": len(records), "records": [_record_to_dict(r) for r in records]}
+
+
+def _read_extractor_record(conn, *, id: str) -> dict[str, Any]:
+    record = extractor_store.get_record(conn, id)
+    if record is None:
+        return {"error": f"record not found: {id}"}
+    return {"record": _record_to_dict(record)}
+
+
+def _list_commitments(
+    conn,
+    *,
+    status: str = "active",
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    return _list_extractor_records(
+        conn, kind="commitment", status=status, since=since, until=until, limit=limit
+    )
 
 
 _SERVER_INSTRUCTIONS = """\
@@ -433,6 +486,48 @@ def build_server(cfg: Config | None = None):
         with fts.cursor() as conn:
             return json.dumps(
                 _recent_activity(conn, since=since, limit=limit, prefix_filter=prefix_filter),
+                ensure_ascii=False,
+            )
+
+    @server.tool()
+    def list_extractor_records(
+        kind: str | None = None,
+        status: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 100,
+    ) -> str:
+        """List typed records extracted from OpenChronicle context.
+
+        Use for operational context such as commitments, person signals,
+        decisions, risks, and open loops. `kind` may be `commitment`,
+        `person_signal`, `decision`, `risk`, or `open_loop`.
+        """
+        with fts.cursor() as conn:
+            return json.dumps(
+                _list_extractor_records(
+                    conn, kind=kind, status=status, since=since, until=until, limit=limit
+                ),
+                ensure_ascii=False,
+            )
+
+    @server.tool()
+    def read_extractor_record(id: str) -> str:
+        """Read one typed extractor record by id, including payload and source refs."""
+        with fts.cursor() as conn:
+            return json.dumps(_read_extractor_record(conn, id=id), ensure_ascii=False)
+
+    @server.tool()
+    def list_commitments(
+        status: str = "active",
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 100,
+    ) -> str:
+        """Convenience view for active commitments extracted from recent context."""
+        with fts.cursor() as conn:
+            return json.dumps(
+                _list_commitments(conn, status=status, since=since, until=until, limit=limit),
                 ensure_ascii=False,
             )
 

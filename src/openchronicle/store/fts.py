@@ -121,8 +121,10 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     from ..session import store as session_store
     from ..timeline import store as timeline_store
+    from ..extractors import store as extractor_store
     timeline_store.ensure_schema(conn)
     session_store.ensure_schema(conn)
+    extractor_store.ensure_schema(conn)
     return conn
 
 
