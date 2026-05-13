@@ -88,7 +88,6 @@ def _call_responses_api(litellm: Any, kwargs: dict[str, Any], *, json_mode: bool
     params: dict[str, Any] = {
         "model": kwargs["model"],
         "input": _responses_input(kwargs.get("messages") or []),
-        "max_output_tokens": kwargs.get("max_tokens") or 4096,
     }
     if kwargs.get("tools"):
         params["tools"] = _responses_tools(kwargs["tools"])
@@ -136,7 +135,9 @@ def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
             continue
-        if role in {"system", "user", "assistant"} and content:
+        if role == "system":
+            role = "developer"
+        if role in {"developer", "user", "assistant"} and content:
             items.append({"role": role, "content": content})
         for call in msg.get("tool_calls") or []:
             fn = _get(call, "function", {}) or {}

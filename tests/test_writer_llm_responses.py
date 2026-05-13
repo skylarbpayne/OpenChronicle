@@ -62,8 +62,40 @@ def test_chatgpt_models_use_litellm_responses_not_completion(monkeypatch: pytest
     assert llm_mod.extract_text(resp) == "ok"
     assert calls[0]["model"] == "chatgpt/gpt-5.3-chat-latest"
     assert calls[0]["input"] == [{"role": "user", "content": "Reply ok"}]
-    assert calls[0]["max_output_tokens"] == 4096
+    assert "max_tokens" not in calls[0]
+    assert "max_output_tokens" not in calls[0]
+    assert "max_completion_tokens" not in calls[0]
     assert calls[0]["text"] == {"format": {"type": "json_object"}}
+
+
+def test_chatgpt_responses_promotes_system_messages_to_developer_and_strips_token_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENCHRONICLE_LLM_MOCK", raising=False)
+    import litellm
+
+    calls: list[dict] = []
+
+    def fake_responses(**kwargs):
+        calls.append(kwargs)
+        return _responses_message("ok")
+
+    monkeypatch.setattr(litellm, "responses", fake_responses)
+
+    llm_mod.call_llm(
+        _cfg("chatgpt/gpt-5.4", max_tokens=2048),
+        "timeline",
+        messages=[
+            {"role": "system", "content": "Be concise."},
+            {"role": "user", "content": "Summarize."},
+        ],
+    )
+
+    assert calls[0]["input"] == [
+        {"role": "developer", "content": "Be concise."},
+        {"role": "user", "content": "Summarize."},
+    ]
+    assert "max_output_tokens" not in calls[0]
 
 
 def test_chatgpt_responses_function_calls_are_extracted(monkeypatch: pytest.MonkeyPatch) -> None:
