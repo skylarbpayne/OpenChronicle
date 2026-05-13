@@ -60,7 +60,7 @@ def test_ping_stage_success_records_latency(monkeypatch: pytest.MonkeyPatch) -> 
 def test_ping_stage_failure_label_includes_class_and_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A raised exception becomes 'ClassName: <first-line>' truncated to 80 chars."""
+    """A raised exception becomes 'ClassName: <first-line>' with useful detail preserved."""
     monkeypatch.delenv("OPENCHRONICLE_LLM_MOCK", raising=False)
     import litellm
 
@@ -79,7 +79,7 @@ def test_ping_stage_failure_label_includes_class_and_message(
     assert res.error is not None
     assert res.error.startswith("AuthenticationError")
     assert "Invalid api key" in res.error
-    assert len(res.error) <= 80
+    assert len(res.error) <= 255
 
 
 def test_ping_stage_failure_with_empty_message_falls_back_to_class(
@@ -122,4 +122,4 @@ def test_ping_stage_truncates_long_error_message(monkeypatch: pytest.MonkeyPatch
 
     assert res.ok is False
     assert res.error is not None
-    assert len(res.error) <= 80
+    assert len(res.error) <= 255

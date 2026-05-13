@@ -61,7 +61,9 @@ def test_chatgpt_models_use_litellm_responses_not_completion(monkeypatch: pytest
 
     assert llm_mod.extract_text(resp) == "ok"
     assert calls[0]["model"] == "chatgpt/gpt-5.3-chat-latest"
-    assert calls[0]["input"] == [{"role": "user", "content": "Reply ok"}]
+    assert calls[0]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "Reply ok"}]}
+    ]
     assert "max_tokens" not in calls[0]
     assert "max_output_tokens" not in calls[0]
     assert "max_completion_tokens" not in calls[0]
@@ -92,8 +94,8 @@ def test_chatgpt_responses_promotes_system_messages_to_developer_and_strips_toke
     )
 
     assert calls[0]["input"] == [
-        {"role": "developer", "content": "Be concise."},
-        {"role": "user", "content": "Summarize."},
+        {"role": "developer", "content": [{"type": "input_text", "text": "Be concise."}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "Summarize."}]},
     ]
     assert "max_output_tokens" not in calls[0]
 

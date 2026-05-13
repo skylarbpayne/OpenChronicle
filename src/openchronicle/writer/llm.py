@@ -138,7 +138,7 @@ def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if role == "system":
             role = "developer"
         if role in {"developer", "user", "assistant"} and content:
-            items.append({"role": role, "content": content})
+            items.append({"role": role, "content": _responses_content_parts(content)})
         for call in msg.get("tool_calls") or []:
             fn = _get(call, "function", {}) or {}
             items.append(
@@ -150,6 +150,18 @@ def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
     return items
+
+
+def _responses_content_parts(content: Any) -> list[dict[str, str]]:
+    """Return ChatGPT-compatible Responses content parts.
+
+    The ChatGPT subscription backend expects message content to be a list of
+    typed parts, even for plain text. Bare string content can trip backend
+    validation before LiteLLM normalizes it.
+    """
+    if isinstance(content, list):
+        return content
+    return [{"type": "input_text", "text": str(content)}]
 
 
 def _responses_to_llm_response(resp: Any) -> LLMResponse:
@@ -258,10 +270,10 @@ def ping_stage(cfg: Config, stage: str, *, timeout: float = 5.0) -> PingResult:
         label = type(exc).__name__
         msg = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
         if msg:
-            label = f"{label}: {msg[:60]}"
+            label = f"{label}: {msg[:240]}"
         return PingResult(
             stage=stage, model=model_cfg.model, ok=False,
-            latency_ms=None, error=label[:80],
+            latency_ms=None, error=label,
         )
     latency_ms = int((time.monotonic() - start) * 1000)
     return PingResult(
