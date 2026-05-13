@@ -52,8 +52,8 @@ def test_ping_stage_success_records_latency(monkeypatch: pytest.MonkeyPatch) -> 
     assert res.mocked is False
     assert res.error is None
     assert res.latency_ms is not None and res.latency_ms >= 0
-    # ping should keep the request small and bounded.
-    assert calls[0]["max_tokens"] == 4
+    # ping should stay bounded but not so tiny that reasoning/Responses models return empty output.
+    assert calls[0]["max_tokens"] == 64
     assert "timeout" in calls[0]
 
 

@@ -5,13 +5,26 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import Config, resolve_api_key
 from ..logger import get
 
 logger = get("openchronicle.writer")
+
+
+@dataclass
+class ToolCall:
+    id: str | None
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class LLMResponse:
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass
@@ -32,9 +45,11 @@ def call_llm(
     tools: list[dict[str, Any]] | None = None,
     json_mode: bool = False,
 ) -> Any:
-    """Invoke litellm for the given stage. Returns the raw ModelResponse.
+    """Invoke litellm for the given stage.
 
-    Respects OPENCHRONICLE_LLM_MOCK=1 for tests: returns a minimal stub.
+    Returns a raw LiteLLM response for Chat Completions-compatible providers and
+    an ``LLMResponse`` for providers that need an internal adapter.
+    Respects OPENCHRONICLE_LLM_MOCK=1 for tests.
     """
     if os.environ.get("OPENCHRONICLE_LLM_MOCK") == "1":
         return _mock_response(stage, messages, tools, json_mode)
@@ -60,7 +75,110 @@ def call_llm(
         kwargs["max_tokens"] = model_cfg.max_tokens
 
     logger.debug("llm call stage=%s model=%s", stage, model_cfg.model)
+    if _uses_responses_api(model_cfg.model):
+        return _call_responses_api(litellm, kwargs, json_mode=json_mode)
     return litellm.completion(**kwargs)
+
+
+def _uses_responses_api(model: str) -> bool:
+    return model.startswith("chatgpt/")
+
+
+def _call_responses_api(litellm: Any, kwargs: dict[str, Any], *, json_mode: bool = False) -> LLMResponse:
+    params: dict[str, Any] = {
+        "model": kwargs["model"],
+        "input": _responses_input(kwargs.get("messages") or []),
+        "max_output_tokens": kwargs.get("max_tokens") or 4096,
+    }
+    if kwargs.get("tools"):
+        params["tools"] = _responses_tools(kwargs["tools"])
+        params["tool_choice"] = kwargs.get("tool_choice", "auto")
+    if json_mode:
+        params["text"] = {"format": {"type": "json_object"}}
+    if kwargs.get("api_base"):
+        params["api_base"] = kwargs["api_base"]
+    if kwargs.get("api_key"):
+        params["api_key"] = kwargs["api_key"]
+    if kwargs.get("timeout"):
+        params["timeout"] = kwargs["timeout"]
+    return _responses_to_llm_response(litellm.responses(**params))
+
+
+def _responses_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        if tool.get("type") != "function" or not isinstance(tool.get("function"), dict):
+            converted.append(tool)
+            continue
+        fn = tool["function"]
+        converted.append(
+            {
+                "type": "function",
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+            }
+        )
+    return converted
+
+
+def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.get("tool_call_id") or msg.get("id") or "call_unknown",
+                    "output": content or "",
+                }
+            )
+            continue
+        if role in {"system", "user", "assistant"} and content:
+            items.append({"role": role, "content": content})
+        for call in msg.get("tool_calls") or []:
+            fn = _get(call, "function", {}) or {}
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": _get(call, "id", None) or "call_unknown",
+                    "name": _get(fn, "name", ""),
+                    "arguments": _get(fn, "arguments", "{}") or "{}",
+                }
+            )
+    return items
+
+
+def _responses_to_llm_response(resp: Any) -> LLMResponse:
+    text_parts: list[str] = []
+    calls: list[ToolCall] = []
+    for item in _get(resp, "output", []) or []:
+        typ = _get(item, "type", "")
+        if typ == "message":
+            for part in _get(item, "content", []) or []:
+                if _get(part, "type", "") in {"output_text", "text"}:
+                    text_parts.append(_get(part, "text", "") or "")
+        elif typ == "function_call":
+            try:
+                args = json.loads(_get(item, "arguments", "{}") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            calls.append(
+                ToolCall(
+                    id=_get(item, "call_id", None) or _get(item, "id", None),
+                    name=_get(item, "name", ""),
+                    arguments=args,
+                )
+            )
+    return LLMResponse(text="\n".join(p for p in text_parts if p), tool_calls=calls)
+
+
+def _get(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 
 def _mock_response(stage: str, messages, tools, json_mode):
@@ -86,6 +204,8 @@ def _mock_response(stage: str, messages, tools, json_mode):
 
 
 def extract_text(response: Any) -> str:
+    if isinstance(response, LLMResponse):
+        return response.text
     try:
         return response.choices[0].message.content or ""
     except (AttributeError, IndexError):
@@ -118,7 +238,7 @@ def ping_stage(cfg: Config, stage: str, *, timeout: float = 5.0) -> PingResult:
     kwargs: dict[str, Any] = {
         "model": model_cfg.model,
         "messages": [{"role": "user", "content": "Reply with 'ok'."}],
-        "max_tokens": 4,
+        "max_tokens": 64,
         "timeout": timeout,
     }
     if model_cfg.base_url:
@@ -129,7 +249,10 @@ def ping_stage(cfg: Config, stage: str, *, timeout: float = 5.0) -> PingResult:
 
     start = time.monotonic()
     try:
-        litellm.completion(**kwargs)
+        if _uses_responses_api(model_cfg.model):
+            _call_responses_api(litellm, kwargs)
+        else:
+            litellm.completion(**kwargs)
     except Exception as exc:  # noqa: BLE001
         label = type(exc).__name__
         msg = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
@@ -147,6 +270,11 @@ def ping_stage(cfg: Config, stage: str, *, timeout: float = 5.0) -> PingResult:
 
 
 def extract_tool_calls(response: Any) -> list[dict[str, Any]]:
+    if isinstance(response, LLMResponse):
+        return [
+            {"id": call.id, "name": call.name, "arguments": call.arguments}
+            for call in response.tool_calls
+        ]
     try:
         calls = response.choices[0].message.tool_calls or []
     except (AttributeError, IndexError):
