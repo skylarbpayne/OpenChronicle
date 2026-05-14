@@ -30,6 +30,15 @@ def _now_iso() -> str:
 
 
 def _safe_filename(ts: str) -> str:
+    # Preserve the sign of timezone offsets while avoiding ambiguous raw '-'
+    # separators in filenames. Example:
+    #   2026-05-14T07:05:27-07:00 -> 2026-05-14T07-05-27m07-00
+    #   2026-05-14T07:05:27+08:00 -> 2026-05-14T07-05-27p08-00
+    if len(ts) >= 25 and ts[-6] in {"+", "-"}:
+        head = ts[:-6].replace(":", "-")
+        sign = "p" if ts[-6] == "+" else "m"
+        offset = ts[-5:].replace(":", "-")
+        return f"{head}{sign}{offset}"
     return ts.replace(":", "-").replace("+", "p")
 
 

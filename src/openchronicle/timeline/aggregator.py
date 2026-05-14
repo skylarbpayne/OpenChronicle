@@ -61,6 +61,11 @@ def _stem_to_dt(stem: str) -> datetime | None:
             tz = "+" + offset[1:].replace("-", ":")
         elif offset.startswith("m"):
             tz = "-" + offset[1:].replace("-", ":")
+        elif offset.startswith("+") or offset.startswith("-"):
+            # Backward compatibility: older negative-offset filenames were
+            # written as raw '-07-00' because _safe_filename only replaced '+'.
+            # Accept both forms so existing buffers can be absorbed.
+            tz = offset[0] + offset[1:].replace("-", ":")
         else:
             tz = ""
         iso = f"{date_part}T{time_part}{tz}"

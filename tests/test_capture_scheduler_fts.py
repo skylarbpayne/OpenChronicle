@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from openchronicle.capture import scheduler as scheduler_mod
+from openchronicle.timeline import aggregator as aggregator_mod
 from openchronicle.store import fts
 
 
@@ -31,6 +32,22 @@ def _capture_dict(
             "width": 100, "height": 50,
         },
     }
+
+
+def test_safe_filename_round_trips_negative_timezone_offset() -> None:
+    stem = scheduler_mod._safe_filename("2026-05-14T07:05:27-07:00")
+    assert stem == "2026-05-14T07-05-27m07-00"
+    parsed = aggregator_mod._stem_to_dt(stem)
+    assert parsed is not None
+    assert parsed.isoformat() == "2026-05-14T07:05:27-07:00"
+
+
+def test_stem_parser_accepts_legacy_raw_negative_offset() -> None:
+    # Existing buffers on machines west of UTC used this form before the
+    # scheduler encoded '-' offsets as 'm'. Timeline still needs to absorb them.
+    parsed = aggregator_mod._stem_to_dt("2026-05-14T07-05-27-07-00")
+    assert parsed is not None
+    assert parsed.isoformat() == "2026-05-14T07:05:27-07:00"
 
 
 def test_write_capture_indexes_into_fts(ac_root: Path) -> None:
