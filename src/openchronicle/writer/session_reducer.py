@@ -506,16 +506,80 @@ def _call_reducer_llm(
         text = llm_mod.extract_text(resp).strip()
         if not text:
             return None
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-        return None
+        return _parse_reducer_payload_text(text)
     except json.JSONDecodeError as exc:
         logger.warning("reducer: malformed JSON from LLM: %s", exc)
         return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("reducer: LLM call failed: %s", exc)
         return None
+
+
+def _parse_reducer_payload_text(text: str) -> dict[str, Any] | None:
+    """Parse reducer JSON, tolerating common LLM wrappers.
+
+    JSON-mode providers should return a bare object, but subscription-backed
+    adapters can still leak markdown fences or short prose around the object.
+    Keep the parser strict about the final shape while accepting those wrappers.
+    """
+    stripped = text.strip()
+    candidates = [stripped]
+
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        fenced = "\n".join(lines).strip()
+        if fenced:
+            candidates.append(fenced)
+
+    embedded = _extract_first_json_object(stripped)
+    if embedded and embedded not in candidates:
+        candidates.append(embedded)
+
+    last_exc: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_exc = exc
+            continue
+        if isinstance(data, dict):
+            return data
+        return None
+    if last_exc is not None:
+        raise last_exc
+    return None
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    """Return the first balanced top-level JSON object substring, if any."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for idx, ch in enumerate(text[start:], start=start):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:idx + 1]
+    return None
 
 
 def _heuristic_payload(

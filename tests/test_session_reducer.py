@@ -132,6 +132,79 @@ def test_reducer_no_blocks_marks_reduced_no_write(ac_root: Path, monkeypatch) ->
     assert row.status == "reduced"
 
 
+def test_reducer_accepts_fenced_json_response(ac_root: Path, monkeypatch) -> None:
+    start = datetime(2026, 4, 21, 12, 30, tzinfo=_TZ)
+    end = start + timedelta(minutes=15)
+    _seed_blocks(start)
+
+    with fts.cursor() as conn:
+        session_store.insert(
+            conn,
+            session_store.SessionRow(id="sess_fenced", start_time=start, end_time=end, status="ended"),
+        )
+
+    monkeypatch.setenv("OPENCHRONICLE_LLM_MOCK", "1")
+    monkeypatch.setenv(
+        "OPENCHRONICLE_LLM_MOCK_JSON",
+        "```json\n"
+        + json.dumps(
+            {
+                "summary": "Worked in Cursor despite fenced JSON.",
+                "sub_tasks": [
+                    "[12:30-12:45, Cursor] edited files, involving file_0.py",
+                ],
+            }
+        )
+        + "\n```",
+    )
+
+    cfg = config_mod.load(ac_root / "config.toml")
+    result = session_reducer.reduce_session(
+        cfg, session_id="sess_fenced", start_time=start, end_time=end,
+    )
+
+    assert result.succeeded is True
+    assert result.written is True
+    md = (paths.memory_dir() / "event-2026-04-21.md").read_text()
+    assert "despite fenced JSON" in md
+
+
+def test_reducer_extracts_json_object_from_wrapped_response(ac_root: Path, monkeypatch) -> None:
+    start = datetime(2026, 4, 21, 12, 45, tzinfo=_TZ)
+    end = start + timedelta(minutes=15)
+    _seed_blocks(start)
+
+    with fts.cursor() as conn:
+        session_store.insert(
+            conn,
+            session_store.SessionRow(id="sess_wrapped", start_time=start, end_time=end, status="ended"),
+        )
+
+    monkeypatch.setenv("OPENCHRONICLE_LLM_MOCK", "1")
+    monkeypatch.setenv(
+        "OPENCHRONICLE_LLM_MOCK_JSON",
+        "Here is the JSON:\n"
+        + json.dumps(
+            {
+                "summary": "Worked in Cursor despite wrapped JSON.",
+                "sub_tasks": [
+                    "[12:45-13:00, Cursor] edited files, involving file_1.py",
+                ],
+            }
+        ),
+    )
+
+    cfg = config_mod.load(ac_root / "config.toml")
+    result = session_reducer.reduce_session(
+        cfg, session_id="sess_wrapped", start_time=start, end_time=end,
+    )
+
+    assert result.succeeded is True
+    assert result.written is True
+    md = (paths.memory_dir() / "event-2026-04-21.md").read_text()
+    assert "despite wrapped JSON" in md
+
+
 def test_reducer_llm_failure_schedules_retry(ac_root: Path, monkeypatch) -> None:
     start = datetime(2026, 4, 21, 12, 0, tzinfo=_TZ)
     end = start + timedelta(minutes=15)
