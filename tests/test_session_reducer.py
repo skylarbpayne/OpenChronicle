@@ -234,6 +234,8 @@ def test_reducer_llm_failure_schedules_retry(ac_root: Path, monkeypatch) -> None
     assert row.status == "failed"
     assert row.retry_count == 1
     assert row.next_retry_at is not None
+    assert row.last_error.startswith("reducer malformed JSON:")
+    assert "shape=non_json_prefix" in row.last_error
 
 
 def test_reducer_exhausted_retries_writes_heuristic(ac_root: Path, monkeypatch) -> None:

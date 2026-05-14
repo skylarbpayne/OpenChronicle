@@ -74,6 +74,12 @@ class ReduceResult:
     is_final: bool = True
 
 
+@dataclass
+class ReducerLLMCallResult:
+    payload: dict[str, Any] | None
+    error: str = ""
+
+
 def reduce_session(
     cfg: Config,
     *,
@@ -199,10 +205,11 @@ def _reduce_window_locked(
         )
 
     event_daily_name = _event_daily_name(session_start)
-    payload = _call_reducer_llm(
+    llm_result = _call_reducer_llm(
         cfg, blocks, window_start, window_end,
         event_daily_name=event_daily_name,
     )
+    payload = llm_result.payload
 
     if payload is None:
         if not is_final:
@@ -230,7 +237,7 @@ def _reduce_window_locked(
             )
             session_store.mark_failed(
                 conn, session_id,
-                error="reducer LLM call failed or returned unparseable JSON",
+                error=llm_result.error or "reducer LLM call failed or returned unparseable JSON",
                 next_retry_at=next_retry_at,
             )
             logger.warning(
@@ -486,7 +493,7 @@ def _call_reducer_llm(
     end_time: datetime,
     *,
     event_daily_name: str,
-) -> dict[str, Any] | None:
+) -> ReducerLLMCallResult:
     preceding_text = _load_preceding_entries(event_daily_name, _PRECEDING_ENTRY_LIMIT)
     prompt = load_prompt("session_reduce.md").format(
         start_time=_format_time(start_time),
@@ -497,6 +504,7 @@ def _call_reducer_llm(
         preceding_text=preceding_text,
         event_daily_name=event_daily_name,
     )
+    text = ""
     try:
         resp = llm_mod.call_llm(
             cfg, "reducer",
@@ -505,14 +513,40 @@ def _call_reducer_llm(
         )
         text = llm_mod.extract_text(resp).strip()
         if not text:
-            return None
-        return _parse_reducer_payload_text(text)
+            return ReducerLLMCallResult(None, "reducer LLM returned empty text")
+        return ReducerLLMCallResult(_parse_reducer_payload_text(text))
     except json.JSONDecodeError as exc:
-        logger.warning("reducer: malformed JSON from LLM: %s", exc)
-        return None
+        error = f"reducer malformed JSON: {exc}; shape={_json_text_shape(text)}"
+        logger.warning(error)
+        return ReducerLLMCallResult(None, error)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("reducer: LLM call failed: %s", exc)
-        return None
+        error = f"reducer LLM call failed: {_safe_error_label(exc)}"
+        logger.warning(error)
+        return ReducerLLMCallResult(None, error)
+
+
+def _json_text_shape(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "empty"
+    if stripped.startswith("```"):
+        return f"code_fence,len={len(stripped)}"
+    if stripped.startswith("{"):
+        return f"object_like,len={len(stripped)}"
+    if stripped.startswith("["):
+        return f"array_like,len={len(stripped)}"
+    return f"non_json_prefix,len={len(stripped)},first_char={stripped[0]!r}"
+
+
+def _safe_error_label(exc: Exception) -> str:
+    label = type(exc).__name__
+    msg = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+    if msg:
+        # Provider validation messages are useful, but keep them bounded and
+        # remove obvious secret-bearing fields. Do not include prompts here.
+        msg = re.sub(r"(?i)(api[_-]?key|authorization|token|password)=\S+", r"\1=[REDACTED]", msg)
+        label = f"{label}: {msg[:240]}"
+    return label
 
 
 def _parse_reducer_payload_text(text: str) -> dict[str, Any] | None:
