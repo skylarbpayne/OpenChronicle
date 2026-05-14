@@ -142,6 +142,38 @@ def test_classifier_invokes_configured_extractors_with_same_grounded_context(
     assert "Cursor configuring" in calls[0]["context"]
 
 
+def test_backfill_extractors_over_existing_event_entries(ac_root: Path, monkeypatch) -> None:
+    day = "2026-04-23"
+    name, _entry_id = _seed_event_daily(day)
+    calls = []
+
+    def fake_run_extractors(cfg, conn, *, run_on, session_id, event_daily_path, context, now):
+        calls.append({
+            "run_on": run_on,
+            "session_id": session_id,
+            "event_daily_path": event_daily_path,
+            "context": context,
+            "now": now,
+        })
+        return extractor_runner.ExtractorRunResult(ran=["core"], written_count=2, skipped_count=1)
+
+    monkeypatch.setattr(extractor_runner, "run_extractors_for_context", fake_run_extractors)
+
+    cfg = config_mod.load(ac_root / "config.toml")
+    result = classifier_mod.run_extractors_for_existing_event_entries(cfg, limit=10)
+
+    assert result.scanned == 1
+    assert result.ran == 1
+    assert result.written == 2
+    assert result.skipped == 1
+    assert result.errors == []
+    assert len(calls) == 1
+    assert calls[0]["run_on"] == "classified_window"
+    assert calls[0]["session_id"] == "sess_abc"
+    assert calls[0]["event_daily_path"] == name
+    assert "Cursor configuring" in calls[0]["context"]
+
+
 def test_classifier_rejects_event_write(ac_root: Path, monkeypatch) -> None:
     day = "2026-04-22"
     name, entry_id = _seed_event_daily(day)

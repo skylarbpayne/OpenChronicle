@@ -859,6 +859,26 @@ writer_app = typer.Typer(help="Writer subcommands.")
 app.add_typer(writer_app, name="writer")
 
 
+@writer_app.command("extract")
+def writer_extract(
+    limit: int = typer.Option(50, "--limit", "-n", help="Max event sessions to process."),
+) -> None:
+    """Run configured extractors over existing event-daily entries."""
+    cfg = _init()
+    from .writer import classifier as classifier_mod
+
+    result = classifier_mod.run_extractors_for_existing_event_entries(cfg, limit=limit)
+    console.print(
+        f"[bold]scanned={result.scanned} "
+        f"ran={result.ran} "
+        f"written={result.written} "
+        f"skipped={result.skipped} "
+        f"errors={len(result.errors)}[/bold]"
+    )
+    for err in result.errors[:10]:
+        console.print(f"  - {err}")
+
+
 @writer_app.command("run")
 def writer_run() -> None:
     """Reduce any pending sessions and run the classifier on each result."""

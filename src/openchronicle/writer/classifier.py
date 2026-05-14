@@ -49,6 +49,15 @@ class ClassifyResult:
     skipped_reason: str = ""
 
 
+@dataclass
+class ExtractExistingResult:
+    scanned: int = 0
+    ran: int = 0
+    written: int = 0
+    skipped: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
 def classify_window(
     cfg: Config,
     *,
@@ -376,7 +385,7 @@ def _run_configured_extractors(
     session_id: str,
     event_daily_path: str,
     context: str,
-) -> None:
+) -> extractor_runner.ExtractorRunResult:
     """Run configured extractors best-effort after classifier context assembly."""
     try:
         result = extractor_runner.run_extractors_for_context(
@@ -390,7 +399,7 @@ def _run_configured_extractors(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("extractors %s: crashed: %s", session_id, exc)
-        return
+        return extractor_runner.ExtractorRunResult(errors=[f"crashed: {exc}"])
     if result.errors:
         logger.warning("extractors %s: %s", session_id, "; ".join(result.errors))
     elif result.written_count:
@@ -398,6 +407,96 @@ def _run_configured_extractors(
             "extractors %s: wrote %d records via %s",
             session_id, result.written_count, ",".join(result.ran),
         )
+    return result
+
+
+_SID_PREFIX = "sid:"
+
+
+def run_extractors_for_existing_event_entries(
+    cfg: Config, *, limit: int = 50,
+) -> ExtractExistingResult:
+    """Backfill configured extractors over already-written event entries.
+
+    Normal operation runs extractors immediately after the classifier sees a fresh
+    reducer entry. During repair/backfill, entries can already be present while
+    extractor_records is empty; this path reuses the same grounded context without
+    re-running the classifier tool loop.
+    """
+    out = ExtractExistingResult()
+    with fts.cursor() as conn:
+        pairs = _event_session_pairs(conn)
+        for session_id, event_daily_path in pairs[:max(limit, 0)]:
+            out.scanned += 1
+            focus_entries = _focus_entries(
+                event_daily_path=event_daily_path,
+                session_id=session_id,
+                fallback_entry_id="",
+            )
+            if not focus_entries:
+                continue
+            timeline_text = _timeline_for_session(conn, session_id)
+            context = _assemble_context(
+                event_daily_path=event_daily_path,
+                focus_entries=focus_entries,
+                timeline_text=timeline_text,
+                prior_day_text="",
+            )
+            result = _run_configured_extractors(
+                cfg,
+                conn,
+                session_id=session_id,
+                event_daily_path=event_daily_path,
+                context=context,
+            )
+            out.ran += len(result.ran)
+            out.written += result.written_count
+            out.skipped += result.skipped_count
+            out.errors.extend(result.errors)
+    return out
+
+
+def _event_session_pairs(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT path, tags, MAX(timestamp) AS last_ts
+          FROM entries
+         WHERE path LIKE 'event-%' AND superseded = 0
+         GROUP BY path, tags
+         ORDER BY last_ts DESC
+        """
+    ).fetchall()
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        path = str(row["path"] or "")
+        tags = str(row["tags"] or "").split()
+        for tag in tags:
+            if not tag.startswith(_SID_PREFIX):
+                continue
+            session_id = tag[len(_SID_PREFIX):]
+            if not session_id:
+                continue
+            key = (session_id, path)
+            if key not in seen:
+                seen.add(key)
+                pairs.append(key)
+    return pairs
+
+
+def _timeline_for_session(conn: sqlite3.Connection, session_id: str) -> str:
+    row = conn.execute(
+        "SELECT start_time, end_time FROM sessions WHERE id=?",
+        (session_id,),
+    ).fetchone()
+    if not row or not row["start_time"] or not row["end_time"]:
+        return ""
+    try:
+        start = datetime.fromisoformat(row["start_time"])
+        end = datetime.fromisoformat(row["end_time"])
+    except (TypeError, ValueError):
+        return ""
+    return _render_timeline_blocks(conn, start, end)
 
 
 def _render_index(conn: sqlite3.Connection) -> str:
