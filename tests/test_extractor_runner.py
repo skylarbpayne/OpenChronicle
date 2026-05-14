@@ -138,6 +138,32 @@ def test_variadic_extractor_accepts_wrapped_json(ac_root, monkeypatch) -> None:
     assert [r.id for r in risks] == ["risk-bridge-fragility"]
 
 
+def test_variadic_extractor_falls_back_to_activity_signal_when_llm_returns_empty(ac_root, monkeypatch) -> None:
+    def fake_call_llm(cfg, stage, *, messages, tools=None, json_mode=False):
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"records": []})))])
+
+    monkeypatch.setattr(llm_mod, "call_llm", fake_call_llm)
+    cfg = config.load(ac_root / "config.toml")
+
+    with fts.cursor() as conn:
+        result = runner.run_extractors_for_context(
+            cfg,
+            conn,
+            run_on="classified_window",
+            session_id="sess_activity",
+            event_daily_path="event-2026-05-12.md",
+            context="# Session entries\n\n**Session sess_activity** (12:00-12:30)\nThe user debugged the OpenChronicle extractor pipeline in iTerm2.",
+            now="2026-05-12T21:00:00-07:00",
+        )
+        activities = extractor_store.list_records(conn, kind="activity_signal")
+
+    assert result.errors == []
+    assert result.written_count == 1
+    assert len(activities) == 1
+    assert activities[0].payload["derived_by"] == "fallback_activity_signal"
+    assert "OpenChronicle extractor" in activities[0].summary
+
+
 def test_variadic_extractor_filters_disabled_kinds_and_low_confidence(ac_root, monkeypatch) -> None:
     def fake_call_llm(cfg, stage, *, messages, tools=None, json_mode=False):
         payload = {

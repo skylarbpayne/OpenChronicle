@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
@@ -82,9 +84,17 @@ def _run_one(
         json_mode=True,
     )
     payload = _parse_json_response(llm_mod.extract_text(resp))
+    raw_records = payload.get("records", []) or []
+    if not raw_records:
+        raw_records = _fallback_activity_records(
+            spec,
+            session_id=session_id,
+            event_daily_path=event_daily_path,
+            context=context,
+        )
     written = 0
     skipped = 0
-    for raw in payload.get("records", []) or []:
+    for raw in raw_records:
         record = _record_from_payload(spec, raw, now=now)
         if record is None:
             skipped += 1
@@ -92,6 +102,83 @@ def _run_one(
         upsert_record(conn, record)
         written += 1
     return written, skipped
+
+
+def _fallback_activity_records(
+    spec: ExtractorSpec,
+    *,
+    session_id: str,
+    event_daily_path: str,
+    context: str,
+) -> list[dict[str, Any]]:
+    """Create a conservative activity_signal when the LLM extracts nothing.
+
+    Reducer entries are already grounded session summaries. For OpenChronicle's
+    agent-use case, losing every activity-only session makes the extractor table
+    useless, so preserve one coarse, source-backed activity record per session.
+    """
+    if not spec.allows_kind("activity_signal"):
+        return []
+    quote = _best_activity_quote(context)
+    if not quote:
+        return []
+    summary = _activity_summary_from_quote(quote)
+    digest = hashlib.sha1(session_id.encode("utf-8")).hexdigest()[:10]
+    return [{
+        "id": f"activity-{digest}",
+        "kind": "activity_signal",
+        "status": "active",
+        "confidence": 0.62,
+        "summary": summary,
+        "payload": {
+            "session_id": session_id,
+            "event_path": event_daily_path,
+            "derived_by": "fallback_activity_signal",
+        },
+        "source_refs": [{
+            "event_path": event_daily_path,
+            "quote": quote,
+        }],
+        "links": [],
+    }]
+
+
+def _best_activity_quote(context: str) -> str:
+    lines = [ln.strip() for ln in context.splitlines()]
+    candidates: list[str] = []
+    priority_prefixes = ("The user ", "- [")
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(priority_prefixes):
+            candidates.append(line)
+    if not candidates:
+        for line in lines:
+            if not line or line.startswith("#"):
+                continue
+            if "Session " in line:
+                candidates.append(line)
+    if not candidates:
+        candidates = [ln for ln in lines if len(ln) >= 24 and not ln.startswith("#")]
+    if not candidates:
+        return ""
+    return _compact_ws(candidates[0])[:280]
+
+
+def _activity_summary_from_quote(quote: str) -> str:
+    text = re.sub(r"^[-*]\s*", "", quote)
+    text = re.sub(r"^\[[^\]]+\]\s*", "", text)
+    text = re.sub(r"^\*\*Session\s+[^*]+\*\*\s*\([^)]*\)\s*", "", text)
+    text = _compact_ws(text).strip(" -—")
+    if not text:
+        return "Session activity captured."
+    if len(text) > 140:
+        text = text[:137].rstrip() + "..."
+    return text[0].upper() + text[1:]
+
+
+def _compact_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _load_prompt(spec: ExtractorSpec) -> str:
