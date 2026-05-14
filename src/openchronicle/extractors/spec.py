@@ -8,7 +8,7 @@ from typing import Any, Literal
 ExtractorMode = Literal["single", "variadic"]
 RunMode = Literal["classified_window", "session_end", "daily"]
 
-DEFAULT_CORE_KINDS = ["commitment", "person_signal", "decision", "risk", "open_loop"]
+DEFAULT_CORE_KINDS = ["activity_signal", "commitment", "person_signal", "decision", "risk", "open_loop"]
 
 
 @dataclass

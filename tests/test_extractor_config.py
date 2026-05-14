@@ -10,7 +10,7 @@ def test_default_config_enables_variadic_core_extractor(tmp_path: Path) -> None:
     assert [spec.id for spec in cfg.extractors.enabled_specs()] == ["core"]
     core = cfg.extractors.enabled_specs()[0]
     assert core.mode == "variadic"
-    assert core.kinds == ["commitment", "person_signal", "decision", "risk", "open_loop"]
+    assert core.kinds == ["activity_signal", "commitment", "person_signal", "decision", "risk", "open_loop"]
     assert core.prompt == "extractors/core.md"
     assert core.schema == "extractors/core.schema.json"
     assert core.model_stage == "classifier"

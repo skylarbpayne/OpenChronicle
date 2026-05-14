@@ -67,13 +67,13 @@ def test_variadic_extractor_accepts_fenced_json(ac_root, monkeypatch) -> None:
         payload = {
             "records": [
                 {
-                    "id": "decision-use-r2-mailbox",
-                    "kind": "decision",
+                    "id": "activity-python-project-cursor",
+                    "kind": "activity_signal",
                     "status": "active",
                     "confidence": 0.8,
-                    "summary": "Use the R2 mailbox mirror.",
-                    "payload": {"decision": "Use R2 mailbox mirror"},
-                    "source_refs": [{"event_path": "event-2026-05-12.md", "entry_id": "e2", "quote": "use R2"}],
+                    "summary": "Worked in Cursor on a Python project.",
+                    "payload": {"project": "Python project", "tool": "Cursor"},
+                    "source_refs": [{"event_path": "event-2026-05-12.md", "entry_id": "e2", "quote": "Cursor configuring"}],
                     "links": [],
                 }
             ]
@@ -90,14 +90,14 @@ def test_variadic_extractor_accepts_fenced_json(ac_root, monkeypatch) -> None:
             run_on="classified_window",
             session_id="sess_456",
             event_daily_path="event-2026-05-12.md",
-            context="Decision: use R2.",
+            context="Activity: Cursor configuring Python project.",
             now="2026-05-12T21:00:00-07:00",
         )
-        decisions = extractor_store.list_records(conn, kind="decision")
+        activities = extractor_store.list_records(conn, kind="activity_signal")
 
     assert result.errors == []
     assert result.written_count == 1
-    assert [r.id for r in decisions] == ["decision-use-r2-mailbox"]
+    assert [r.id for r in activities] == ["activity-python-project-cursor"]
 
 
 def test_variadic_extractor_accepts_wrapped_json(ac_root, monkeypatch) -> None:
