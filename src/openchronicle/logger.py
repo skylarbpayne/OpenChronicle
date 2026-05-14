@@ -43,6 +43,7 @@ def setup(*, console: bool = True, verbose: bool = False) -> None:
         root.addHandler(sh)
 
     _sink("openchronicle.writer", "writer.log", level=level)
+    _sink("openchronicle.extractors", "writer.log", level=level)
     _sink("openchronicle.compact", "compact.log", level=level)
     _sink("openchronicle.capture", "capture.log", level=level)
     _sink("openchronicle.timeline", "timeline.log", level=level)

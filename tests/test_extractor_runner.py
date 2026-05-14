@@ -62,6 +62,82 @@ def test_variadic_extractor_stores_multiple_record_kinds_in_one_llm_pass(ac_root
     assert [r.id for r in people] == ["person-bob"]
 
 
+def test_variadic_extractor_accepts_fenced_json(ac_root, monkeypatch) -> None:
+    def fake_call_llm(cfg, stage, *, messages, tools=None, json_mode=False):
+        payload = {
+            "records": [
+                {
+                    "id": "decision-use-r2-mailbox",
+                    "kind": "decision",
+                    "status": "active",
+                    "confidence": 0.8,
+                    "summary": "Use the R2 mailbox mirror.",
+                    "payload": {"decision": "Use R2 mailbox mirror"},
+                    "source_refs": [{"event_path": "event-2026-05-12.md", "entry_id": "e2", "quote": "use R2"}],
+                    "links": [],
+                }
+            ]
+        }
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="```json\n" + json.dumps(payload) + "\n```"))])
+
+    monkeypatch.setattr(llm_mod, "call_llm", fake_call_llm)
+    cfg = config.load(ac_root / "config.toml")
+
+    with fts.cursor() as conn:
+        result = runner.run_extractors_for_context(
+            cfg,
+            conn,
+            run_on="classified_window",
+            session_id="sess_456",
+            event_daily_path="event-2026-05-12.md",
+            context="Decision: use R2.",
+            now="2026-05-12T21:00:00-07:00",
+        )
+        decisions = extractor_store.list_records(conn, kind="decision")
+
+    assert result.errors == []
+    assert result.written_count == 1
+    assert [r.id for r in decisions] == ["decision-use-r2-mailbox"]
+
+
+def test_variadic_extractor_accepts_wrapped_json(ac_root, monkeypatch) -> None:
+    def fake_call_llm(cfg, stage, *, messages, tools=None, json_mode=False):
+        payload = {
+            "records": [
+                {
+                    "id": "risk-bridge-fragility",
+                    "kind": "risk",
+                    "status": "active",
+                    "confidence": 0.82,
+                    "summary": "Bridge sync is fragile.",
+                    "payload": {"risk": "Bridge sync fragility"},
+                    "source_refs": [{"event_path": "event-2026-05-12.md", "entry_id": "e3", "quote": "fragile"}],
+                    "links": [],
+                }
+            ]
+        }
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Here is the JSON:\n" + json.dumps(payload)))])
+
+    monkeypatch.setattr(llm_mod, "call_llm", fake_call_llm)
+    cfg = config.load(ac_root / "config.toml")
+
+    with fts.cursor() as conn:
+        result = runner.run_extractors_for_context(
+            cfg,
+            conn,
+            run_on="classified_window",
+            session_id="sess_789",
+            event_daily_path="event-2026-05-12.md",
+            context="Risk: fragile bridge.",
+            now="2026-05-12T21:00:00-07:00",
+        )
+        risks = extractor_store.list_records(conn, kind="risk")
+
+    assert result.errors == []
+    assert result.written_count == 1
+    assert [r.id for r in risks] == ["risk-bridge-fragility"]
+
+
 def test_variadic_extractor_filters_disabled_kinds_and_low_confidence(ac_root, monkeypatch) -> None:
     def fake_call_llm(cfg, stage, *, messages, tools=None, json_mode=False):
         payload = {

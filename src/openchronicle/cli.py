@@ -257,8 +257,10 @@ def status() -> None:
             "SELECT COUNT(*), MAX(end_time) FROM timeline_blocks"
         ).fetchone()
         tlb_count = tlb_row[0] if tlb_row else 0
-        tlb_last = tlb_row[1] if tlb_row and tlb_row[1] else "(none)"
+        tlb_last = conn.execute("SELECT MAX(end_time) FROM timeline_blocks").fetchone()[0]
+        extractor_count = conn.execute("SELECT COUNT(*) FROM extractor_records").fetchone()[0]
         table.add_row("Timeline", f"{tlb_count} blocks, last end: {tlb_last}")
+        table.add_row("Extractor Records", f"{extractor_count} records")
 
     stages = ("timeline", "reducer", "classifier", "compact")
     ping_results = _ping_stages(cfg, stages)

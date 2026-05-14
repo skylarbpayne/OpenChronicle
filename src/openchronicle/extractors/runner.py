@@ -50,6 +50,10 @@ def run_extractors_for_context(
             )
             result.written_count += written
             result.skipped_count += skipped
+            logger.info(
+                "extractor %s: wrote=%d skipped=%d",
+                spec.id, written, skipped,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("extractor %s failed: %s", spec.id, exc)
             result.errors.append(f"{spec.id}: {exc}")
@@ -125,16 +129,79 @@ def _render_user_message(
 
 
 def _parse_json_response(text: str) -> dict[str, Any]:
-    try:
-        data = json.loads(text or "{}")
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"extractor returned invalid JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ValueError("extractor JSON must be an object")
-    records = data.get("records", [])
-    if not isinstance(records, list):
-        raise ValueError("extractor JSON records must be a list")
-    return data
+    stripped = (text or "{}").strip()
+    candidates = [stripped]
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        fenced = "\n".join(lines).strip()
+        if fenced:
+            candidates.append(fenced)
+    embedded = _extract_first_json_object(stripped)
+    if embedded and embedded not in candidates:
+        candidates.append(embedded)
+
+    last_exc: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate or "{}")
+        except json.JSONDecodeError as exc:
+            last_exc = exc
+            continue
+        if not isinstance(data, dict):
+            raise ValueError("extractor JSON must be an object")
+        records = data.get("records", [])
+        if not isinstance(records, list):
+            raise ValueError("extractor JSON records must be a list")
+        return data
+    if last_exc is not None:
+        raise ValueError(
+            f"extractor returned invalid JSON: {last_exc}; shape={_json_text_shape(stripped)}"
+        ) from last_exc
+    return {"records": []}
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for idx, ch in enumerate(text[start:], start=start):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:idx + 1]
+    return None
+
+
+def _json_text_shape(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "empty"
+    if stripped.startswith("```"):
+        return f"code_fence,len={len(stripped)}"
+    if stripped.startswith("{"):
+        return f"object_like,len={len(stripped)}"
+    if stripped.startswith("["):
+        return f"array_like,len={len(stripped)}"
+    return f"non_json_prefix,len={len(stripped)},first_char={stripped[0]!r}"
 
 
 def _record_from_payload(spec: ExtractorSpec, raw: Any, *, now: str) -> ExtractorRecord | None:
