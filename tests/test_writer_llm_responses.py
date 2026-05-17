@@ -100,6 +100,52 @@ def test_chatgpt_responses_promotes_system_messages_to_developer_and_strips_toke
     assert "max_output_tokens" not in calls[0]
 
 
+def test_chatgpt_responses_extracts_top_level_output_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENCHRONICLE_LLM_MOCK", raising=False)
+    import litellm
+
+    def fake_responses(**kwargs):
+        return SimpleNamespace(output_text='{"summary":"ok","sub_tasks":[]}')
+
+    monkeypatch.setattr(litellm, "responses", fake_responses)
+
+    resp = llm_mod.call_llm(
+        _cfg("chatgpt/gpt-5.3-codex"),
+        "reducer",
+        messages=[{"role": "user", "content": "Return JSON"}],
+        json_mode=True,
+    )
+
+    assert llm_mod.extract_text(resp) == '{"summary":"ok","sub_tasks":[]}'
+
+
+def test_chatgpt_responses_extracts_text_from_unexpected_content_part_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENCHRONICLE_LLM_MOCK", raising=False)
+    import litellm
+
+    def fake_responses(**kwargs):
+        return SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="message",
+                    content=[SimpleNamespace(type="summary_text", text="ok")],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(litellm, "responses", fake_responses)
+
+    resp = llm_mod.call_llm(
+        _cfg("chatgpt/gpt-5.3-codex"),
+        "timeline",
+        messages=[{"role": "user", "content": "Reply ok"}],
+    )
+
+    assert llm_mod.extract_text(resp) == "ok"
+
+
 def test_chatgpt_responses_function_calls_are_extracted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENCHRONICLE_LLM_MOCK", raising=False)
     import litellm

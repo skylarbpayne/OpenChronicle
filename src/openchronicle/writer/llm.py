@@ -167,13 +167,19 @@ def _responses_content_parts(content: Any) -> list[dict[str, str]]:
 def _responses_to_llm_response(resp: Any) -> LLMResponse:
     text_parts: list[str] = []
     calls: list[ToolCall] = []
-    for item in _get(resp, "output", []) or []:
+
+    # LiteLLM/OpenAI Responses objects expose text in a few shapes depending on
+    # provider/model/version. Prefer the official convenience field when it is
+    # present, then fall back to walking output message content. The previous
+    # adapter only handled one nested shape, which made health checks look green
+    # while reducer/extractor calls saw empty text.
+    top_level_text = _get(resp, "output_text", "")
+    if isinstance(top_level_text, str) and top_level_text.strip():
+        text_parts.append(top_level_text)
+
+    for item in _as_list(_get(resp, "output", [])):
         typ = _get(item, "type", "")
-        if typ == "message":
-            for part in _get(item, "content", []) or []:
-                if _get(part, "type", "") in {"output_text", "text"}:
-                    text_parts.append(_get(part, "text", "") or "")
-        elif typ == "function_call":
+        if typ == "function_call":
             try:
                 args = json.loads(_get(item, "arguments", "{}") or "{}")
             except json.JSONDecodeError:
@@ -185,7 +191,45 @@ def _responses_to_llm_response(resp: Any) -> LLMResponse:
                     arguments=args,
                 )
             )
+            continue
+
+        if typ in {"output_text", "text"}:
+            text = _get(item, "text", "")
+            if isinstance(text, str) and text.strip():
+                text_parts.append(text)
+            continue
+
+        content = _get(item, "content", None)
+        if content is not None:
+            for part in _as_list(content):
+                text = _get(part, "text", "")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text)
+            continue
+
+        text = _get(item, "text", "")
+        if isinstance(text, str) and text.strip():
+            text_parts.append(text)
+
+    # Defensive fallback for Responses shims that return a Chat Completions-like
+    # object even when called through litellm.responses().
+    if not text_parts:
+        try:
+            text = resp.choices[0].message.content or ""
+        except (AttributeError, IndexError):
+            text = ""
+        if text.strip():
+            text_parts.append(text)
+
     return LLMResponse(text="\n".join(p for p in text_parts if p), tool_calls=calls)
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -263,7 +307,10 @@ def ping_stage(cfg: Config, stage: str, *, timeout: float = 5.0) -> PingResult:
     start = time.monotonic()
     try:
         if _uses_responses_api(model_cfg.model):
-            _call_responses_api(litellm, kwargs)
+            resp = _call_responses_api(litellm, kwargs)
+            text = extract_text(resp).strip()
+            if not text:
+                raise ValueError("Responses ping returned empty text")
         else:
             litellm.completion(**kwargs)
     except Exception as exc:  # noqa: BLE001

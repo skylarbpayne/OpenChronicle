@@ -57,6 +57,26 @@ def test_ping_stage_success_records_latency(monkeypatch: pytest.MonkeyPatch) -> 
     assert "timeout" in calls[0]
 
 
+def test_ping_stage_chatgpt_responses_empty_text_is_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Responses ping must validate parsed text, not just HTTP success."""
+    monkeypatch.delenv("OPENCHRONICLE_LLM_MOCK", raising=False)
+    import litellm
+
+    def fake_responses(**kwargs):
+        return object()
+
+    monkeypatch.setattr(litellm, "responses", fake_responses)
+    cfg = _cfg_with_model("chatgpt/gpt-5.3-codex")
+
+    res = llm_mod.ping_stage(cfg, "reducer")
+
+    assert res.ok is False
+    assert res.error is not None
+    assert "Responses ping returned empty text" in res.error
+
+
 def test_ping_stage_failure_label_includes_class_and_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
